@@ -15,6 +15,7 @@
 #include <sys/types.h>
 #include "netUtils.h"
 #include "vegosh.h"
+#include "protocol.h"
 
 /**
  * @brief Working of handle_insert
@@ -42,12 +43,18 @@ int handle_insert(int connfd){
 
     int result = insert(key, value, value_len);
     if(result == -1){
-
+        uint8_t response = KEY_NOT_FOUND;
+        writen(connfd, &response, 1);
     }else if (result == 0) {
-        uint8_t response = 69;
+        uint8_t response = SUCCESS;
+        writen(connfd, &response, 1);
+    }else if(result == 1){
+        uint8_t response = KEY_EXISTS_UPDATED;
+        writen(connfd, &response, 1);
+    }else if(result == -2){
+        uint8_t response = MAX_KEY_LIMIT_REACHED;
         writen(connfd, &response, 1);
     }
-
 
     return 0;
 
@@ -56,18 +63,27 @@ int handle_insert(int connfd){
 
 int handle_get(int connfd) {
     uint8_t key[16];
-    uint8_t value_len;
+    uint8_t value_len = 0;
     uint8_t out_value[32];
 
     readn(connfd, key, 16);
 
-    int ret = get(key, out_value, &value_len);
-    if (ret != 0) {
-        /* send error/not-found response to client */
-        return ret;
+    int result = get(key, out_value, &value_len);
+
+    if (result == -1) {
+        uint8_t response = KEY_NOT_FOUND;
+        writen(connfd, &response, 1);
+        return 0;  //
     }
 
+    if (value_len > sizeof(out_value)) {
+        return -1; // sanity check
+    }
+
+    uint8_t response = SUCCESS;
+    writen(connfd, &response, 1);
     writen(connfd, out_value, value_len);
+
     return 0;
 }
 

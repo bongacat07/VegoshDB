@@ -114,71 +114,76 @@ static inline void swap_entry_with_temp(size_t index, struct Slot *temp) {
  *
  * @param key   Pointer to exactly 16 bytes of key data.
  * @param value Pointer to exactly 32 bytes of value data.
- * @return 0 on success, -1 if the table or key cap is exhausted.
+ * @return 0 on success, -2 if the table or key cap is exhausted, 1 if the key already exists and is updated.
  */
-int insert(const uint8_t *key, const uint8_t *value, const uint8_t *value_len) {
-    /* Cache the lower 32 bits of the 64-bit hash alongside each entry so we
-     * can quickly skip non-matching slots and compute probe distances without
-     * re-hashing. */
-    uint32_t hash = (uint32_t)(XXH3_64bits(key, 16) & 0xFFFFFFFF);
-    size_t   home = hash & MASK;
-    size_t   index  = home;
-    size_t   dist = 0; /* displacement of the entry we are trying to place */
+ int insert(const uint8_t *key, const uint8_t *value, const uint8_t *value_len) {
+     /* Cache the lower 32 bits of the 64-bit hash alongside each entry so we
+      * can quickly skip non-matching slots and compute probe distances without
+      * re-hashing. */
+     uint32_t hash = (uint32_t)(XXH3_64bits(key, 16) & 0xFFFFFFFF);
+     size_t   home = hash & MASK;
+     size_t   index  = home;
+     size_t   dist = 0; /* displacement of the entry we are trying to place */
 
-    /* Build the entry to insert in a local buffer. */
-    struct Slot temp = {0};
-    memcpy(temp.key,   key,   16);
-    memcpy(temp.value, value, 32);
-    temp.value_len = *value_len;
-    temp.crc32 = crc32(0L, (const Bytef *)temp.key, 16);
-    temp.crc32 = crc32(temp.crc32, (const Bytef *)temp.value, 32);
-    temp.crc32 = crc32(temp.crc32, (const Bytef *)&temp.value_len, 1);
-    temp.hash   = hash;
-    temp.status = OCCUPIED;
+     /* Build the entry to insert in a local buffer. */
+     struct Slot temp = {0};
+     memcpy(temp.key,   key,   16);
+     memcpy(temp.value, value, 32);
+     temp.value_len = *value_len;
+     temp.crc32 = crc32(0L, (const Bytef *)temp.key, 16);
+     temp.crc32 = crc32(temp.crc32, (const Bytef *)temp.value, 32);
+     temp.crc32 = crc32(temp.crc32, (const Bytef *)&temp.value_len, 1);
+     temp.hash   = hash;
+     temp.crc32 = crc32(temp.crc32, (const Bytef *)&temp.hash, 4);
+     temp.status = OCCUPIED;
+     temp.crc32 = crc32(temp.crc32, (const Bytef *)&temp.status, 1);
 
-    while (1) {
-        struct Slot *slot = &vegosh[index];
+     while (1) {
+         struct Slot *slot = &vegosh[index];
 
-        /* Case 1: empty slot – write the entry here. */
-        if (slot->status == EMPTY) {
-            if (vegosh_count >= MAX_KEYS) {
-                return -1; /* hard key cap reached */
-            }
-            memcpy(slot, &temp, sizeof(struct Slot));
-            slot->status = OCCUPIED;
-            vegosh_count++;
-            return 0;
-        }
+         /* Case 1: empty slot – write the entry here. */
+         if (slot->status == EMPTY) {
+             if (vegosh_count >= MAX_KEYS) {
+                 return -2; /* hard key cap reached */
+             }
+             memcpy(slot, &temp, sizeof(struct Slot));
+             slot->status = OCCUPIED;
+             vegosh_count++;
+             return 0;
+         }
 
-        /* Case 2: same key – update value without consuming a new slot. */
-        if (slot->hash == temp.hash &&
-            memcmp(slot->key, temp.key, 16) == 0) {
-            memcpy(slot->value, temp.value, 32);
-            return 0;
-        }
+         /* Case 2: same key – update value without consuming a new slot. */
+         if (slot->hash == temp.hash &&
+             memcmp(slot->key, temp.key, 16) == 0) {
+             memcpy(slot->value, temp.value, 32);
+             slot->crc32 = temp.crc32;
 
-        /* Case 3: Robin Hood eviction.
-         * If the incumbent is closer to its home than we are to ours,
-         * steal its slot and continue placing the displaced entry. */
-        size_t occ_home = slot->hash & MASK;
-        size_t occ_dist = probe_distance(index, occ_home);
 
-        if (occ_dist < dist) {
-            /* Swap our entry into this slot; continue with the evicted one. */
-            swap_entry_with_temp(index, &temp);
-            dist = occ_dist; /* reset dist to the evicted entry's displacement */
-        }
+             return 1;
+         }
 
-        /* Advance to the next slot (linear probing). */
-        index = (index + 1) & MASK;
-        dist++;
+         /* Case 3: Robin Hood eviction.
+          * If the incumbent is closer to its home than we are to ours,
+          * steal its slot and continue placing the displaced entry. */
+         size_t occ_home = slot->hash & MASK;
+         size_t occ_dist = probe_distance(index, occ_home);
 
-        /* Safety guard: wrapped all the way around – table is completely full. */
-        if (dist >= TABLE_SIZE) {
-            return -1;
-        }
-    }
-}
+         if (occ_dist < dist) {
+             /* Swap our entry into this slot; continue with the evicted one. */
+             swap_entry_with_temp(index, &temp);
+             dist = occ_dist; /* reset dist to the evicted entry's displacement */
+         }
+
+         /* Advance to the next slot (linear probing). */
+         index = (index + 1) & MASK;
+         dist++;
+
+         /* Safety guard: wrapped all the way around – table is completely full. */
+         if (dist >= TABLE_SIZE) {
+             return -2;
+         }
+     }
+ }
 
 /**
  * @brief Looks up a key and copies its associated value into @p out_value.
@@ -192,7 +197,7 @@ int insert(const uint8_t *key, const uint8_t *value, const uint8_t *value_len) {
  * @param out_value Destination buffer of at least 32 bytes; written on hit.
  * @return 0 if found (value written), -1 if the key is not present.
  */
-int get(const uint8_t *key, uint8_t *out_value) {
+int get(const uint8_t *key, uint8_t *out_value, uint8_t *value_len) {
     uint32_t hash = (uint32_t)(XXH3_64bits(key, 16) & 0xFFFFFFFF);
     size_t   home = hash & MASK;
     size_t   index  = home;
@@ -210,6 +215,7 @@ int get(const uint8_t *key, uint8_t *out_value) {
         if (slot->hash == hash &&
             memcmp(slot->key, key, 16) == 0) {
             memcpy(out_value, slot->value, 32);
+            *value_len = slot->value_len;
             return 0;
         }
 
