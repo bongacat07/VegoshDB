@@ -1,3 +1,12 @@
+/**
+ * readn, writen — adapted from W. Richard Stevens,
+ * Unix Network Programming.
+ *
+ * These helpers perform full-length blocking I/O,
+ * retrying on EINTR and handling partial reads/writes.
+ */
+
+
 #include "netUtils.h"
 
 ssize_t readn(int fd, void *buf, size_t n) {
