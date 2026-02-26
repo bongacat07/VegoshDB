@@ -155,12 +155,15 @@ static inline void swap_entry_with_temp(size_t index, struct Slot *temp) {
          /* Case 2: same key – update value without consuming a new slot. */
          if (slot->hash == temp.hash &&
              memcmp(slot->key, temp.key, 16) == 0) {
-             memcpy(slot->value, temp.value, 32);
+             slot->value_len = temp.value_len;
+
              slot->crc32 = temp.crc32;
 
 
              return 1;
          }
+
+
 
          /* Case 3: Robin Hood eviction.
           * If the incumbent is closer to its home than we are to ours,
