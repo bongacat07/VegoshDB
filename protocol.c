@@ -1,14 +1,7 @@
 /**
  * @protocol.c
  * @Implementation of the protocol
- *
- *
  */
-
-
-
-
-
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
@@ -16,105 +9,84 @@
 #include "netUtils.h"
 #include "vegosh.h"
 #include "protocol.h"
-
 /**
- * @brief Working of handle_insert
- *
- * Reads 16 bytes from the socket buffer into @p key.
- * Reads 32 bytes from the socket buffer into @p value.
- * Reads 1 byte from the socket buffer into @p value_len.
- *
- * After the swap, @p temp holds the old slot contents and vegosh[index]
- * holds what @p temp previously held. The status byte of the newly written
- * slot is explicitly set to OCCUPIED so callers need not worry about it.
- *
- * @param index  Index of the slot to swap with.
- * @param temp Temporary slot buffer used as the exchange partner.
+ * @brief Reads key_len and val_len from the socket, then reads
+ * exactly that many bytes for key and value respectively.
+ * Calls insert() and sends back the appropriate status byte.
  */
+int handle_insert(int connfd) {
+    uint8_t key_len, val_len;
+    readn(connfd, &key_len, 1);
+    readn(connfd, &val_len, 1);
 
-int handle_insert(int connfd){
-    uint8_t key[16];
-    uint8_t value[32];
-    uint8_t value_len[1];
-
-    readn(connfd, key, 16);
-    readn(connfd, value, 32);
-    readn(connfd, value_len, 1);
-
-    int result = insert(key, value, value_len);
-    if(result == -1){
-        uint8_t response = KEY_NOT_FOUND;
+    if (key_len > 16 || val_len > 32) {
+        uint8_t response = INVALID_OPCODE;
         writen(connfd, &response, 1);
-    }else if (result == 0) {
-        uint8_t response = SUCCESS;
-        writen(connfd, &response, 1);
-    }else if(result == 1){
-        uint8_t response = KEY_EXISTS_UPDATED;
-        writen(connfd, &response, 1);
-    }else if(result == -2){
-        uint8_t response = MAX_KEY_LIMIT_REACHED;
-        writen(connfd, &response, 1);
+        return -1;
     }
 
+    uint8_t key[16]   = {0};
+    uint8_t value[32] = {0};
+    readn(connfd, key, key_len);
+    readn(connfd, value, val_len);
+
+    int result = insert(key, value, &val_len);
+    uint8_t response;
+    if      (result ==  0) response = SUCCESS;
+    else if (result ==  1) response = KEY_EXISTS_UPDATED;
+    else if (result == -1) response = KEY_NOT_FOUND;
+    else if (result == -2) response = MAX_KEY_LIMIT_REACHED;
+    else                   response = INVALID_OPCODE;
+    writen(connfd, &response, 1);
     return 0;
-
-
 }
-
+/**
+ * @brief Reads key_len from the socket, then reads exactly that
+ * many bytes for the key. Sends back a status byte, followed by
+ * the value if found.
+ */
 int handle_get(int connfd) {
-    uint8_t key[16];
+    uint8_t key_len;
+    readn(connfd, &key_len, 1);
+
+    if (key_len > 16) {
+        uint8_t response = INVALID_OPCODE;
+        writen(connfd, &response, 1);
+        return -1;
+    }
+
+    uint8_t key[16] = {0};
+    readn(connfd, key, key_len);
+
     uint8_t value_len = 0;
     uint8_t out_value[32];
-
-    readn(connfd, key, 16);
-
     int result = get(key, out_value, &value_len);
-
     if (result == -1) {
         uint8_t response = KEY_NOT_FOUND;
         writen(connfd, &response, 1);
-        return 0;  //
+        return 0;
     }
-
-    if (value_len > sizeof(out_value)) {
-        return -1; // sanity check
-    }
-
     uint8_t response = SUCCESS;
     writen(connfd, &response, 1);
+    writen(connfd, &value_len, 1);
     writen(connfd, out_value, value_len);
-
     return 0;
 }
-
-/* -------------------------------------------------------------------------
- * Protocol parser
- * ---------------------------------------------------------------------- */
-
 /**
- *  Read the first byte of the socket buffer
+ * @brief Reads the opcode byte from the socket and dispatches
+ * to the appropriate handler.
  *
- * SET --> 0X01
- * GET --> 0X02
- *
- * Call the appropriate handler
+ * SET --> 0x01
+ * GET --> 0x02
  */
-int parser(int connfd){
-    uint8_t methodbuf[1]; //methodbuffer
-    memset(methodbuf,0,1); //set 0
-    readn(connfd,methodbuf,1); //read one byte
-
-    switch (methodbuf[0]) {
-        case 0x01:{
-           return handle_insert(connfd);//SET
-        }
-        case 0x02:{
-           return handle_get(connfd);//GET
-        }
-        default:{
-            fprintf(stderr, "Invalid method\n");
+int parser(int connfd) {
+    uint8_t opcode;
+    readn(connfd, &opcode, 1);
+    switch (opcode) {
+        case 0x01: return handle_insert(connfd);
+        case 0x02: return handle_get(connfd);
+        default:
+            fprintf(stderr, "Invalid opcode: 0x%02x\n", opcode);
             return -1;
-        }
     }
-
 }

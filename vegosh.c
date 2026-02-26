@@ -40,7 +40,7 @@ static size_t vegosh_count = 0;
  *
  * @return 0 on success, -1 if allocation fails.
  */
-int initializeKV(void) {
+int initializevegosh(void) {
     /* Verify the slot struct is exactly one cache line at compile time. */
     static_assert(sizeof(struct Slot) == 64,
                   "struct Slot must be exactly 64 bytes (one cache line)");
