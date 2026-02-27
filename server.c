@@ -1,5 +1,9 @@
 #include "netUtils.h"
 #include "protocol.h"
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#include <signal.h>
 
 /**
  * @brief Initializes a TCP server on port 8080 and handles clients sequentially.
@@ -50,6 +54,9 @@ int startServer() {
         return -1;
     }
 
+    /* Prevent zombie processes from forked children. */
+    signal(SIGCHLD, SIG_IGN);
+
     /* Main accept loop: runs for the lifetime of the server. */
     for (;;) {
         clilen = sizeof(clientaddr);
@@ -61,18 +68,37 @@ int startServer() {
             continue; /* don't kill the server on a single bad accept */
         }
 
-        printf("Accepted a new connection\n");
+        /* Fork a child process to handle this client. */
+        pid_t pid = fork();
+        if (pid < 0) {
+            perror("fork");
+            close(connfd);
+            continue;
+        }
 
-        /*
-         * Process requests from this client.
-         * parser() handles one protocol command per call and
-         * returns 0 while the connection should remain open.
-         */
-        while (parser(connfd) == 0)
-            ;
+        if (pid == 0) {
+            /* Child process: handle the client connection. */
 
-        /* Client session finished — close the connected socket. */
+            close(listenfd); /* child does not accept new clients */
+
+            printf("Accepted a new connection\n");
+
+            /*
+             * Process requests from this client.
+             * parser() handles one protocol command per call and
+             * returns 0 while the connection should remain open.
+             */
+            while (parser(connfd) == 0)
+                ;
+
+            /* Client session finished — close the connected socket. */
+            close(connfd);
+            printf("Connection closed\n");
+
+            _exit(0); /* terminate child process safely */
+        }
+
+        /* Parent process: close connected socket and continue accepting. */
         close(connfd);
-        printf("Connection closed\n");
     }
 }
