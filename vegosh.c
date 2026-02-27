@@ -17,6 +17,7 @@
 #include "vegosh.h"
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 /* -------------------------------------------------------------------------
  * Global table state
@@ -156,7 +157,7 @@ static inline void swap_entry_with_temp(size_t index, struct Slot *temp) {
          if (slot->hash == temp.hash &&
              memcmp(slot->key, temp.key, 16) == 0) {
              slot->value_len = temp.value_len;
-
+             memcpy(slot->value, temp.value, temp.value_len);
              slot->crc32 = temp.crc32;
 
 
