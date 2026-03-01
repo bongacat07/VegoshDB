@@ -41,7 +41,7 @@ During insertion, if the incoming entry has traveled further from its ideal slot
 
 At ~47% load with high-entropy keys, **average probe length is well below 1.5**. Most lookups are one probe. On a miss, if the examined entry has a shorter probe distance than the target, the target does not exist — early termination. Double hashing has no equivalent.
 
-There are no tombstones. Only `EMPTY` and `OCCUPIED` states exist.
+There are no tombstones. Only `EMPTY` and `OCCUPIED` states exist YET.
 
 ---
 
@@ -87,13 +87,10 @@ The KV store is identical across all stages. Only the networking layer changes. 
 | 4 | AF_XDP | Tens of millions of ops/sec | Partial kernel bypass via UMEM shared memory |
 | 5 | DPDK | 100M+ ops/sec | Full kernel bypass — you own the NIC |
 
-> **Note on metrics:** Poll through io_uring is measured in concurrent connections. AF_XDP and DPDK are measured in packets and ops/sec with nanosecond latency. The shift is not arbitrary — it reflects a genuine change in where the bottleneck lives. At 100GbE with 64-byte packets, the theoretical ceiling is ~148M packets/sec. This is how HFT and telco infrastructure actually works.
-
+> **Note on metrics:** Poll through io_uring is measured in concurrent connections. AF_XDP and DPDK are measured in packets and ops/sec with nanosecond latency.
 ---
 
 ## Use Cases
-
-These aren't a coincidence. They follow directly from the constraints.
 
 **Routing tables** — 16-byte keys handle IPv6 prefixes natively. 32-byte values hold next hop, interface, and metadata. Overwhelmingly read-heavy, largely static. At DPDK layer, Redis cannot run here. VegoshDB can.
 
@@ -102,8 +99,6 @@ These aren't a coincidence. They follow directly from the constraints.
 **Session token validation** — 16-byte UUID keys map to user ID, expiry, and role flags. Auth lives on the hot path. Every request hits this.
 
 **Rate limiting** — IP or API key maps to counter and timestamp. Every request hits this too.
-
-**Feature flags** — Feature and user segment map to flag state. Read on every request.
 
 The common thread: fixed small keys and values, extremely hot read paths, latency as the only metric that matters.
 
